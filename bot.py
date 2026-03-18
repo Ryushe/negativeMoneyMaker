@@ -10,7 +10,10 @@ Key improvements over v1:
 
 import base64
 import datetime
+import logging
+import math
 import os
+import sys
 import time
 
 import numpy as np
@@ -25,6 +28,27 @@ from metrics import PerformanceLog, PositionTracker
 from risk import RiskGuard
 
 load_dotenv()
+
+# ── Logging — writes to both terminal and logs/bot_YYYY-MM-DD.log ────────────
+LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+_log_file = os.path.join(LOG_DIR, f"bot_{datetime.date.today()}.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(message)s",
+    datefmt="%H:%M:%S",
+    handlers=[
+        logging.FileHandler(_log_file, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("bot")
+
+
+def _print(*args, **kwargs):
+    """Drop-in for _print() that also writes to the log file."""
+    log.info(" ".join(str(a) for a in args))
 
 # ── Config ───────────────────────────────────────────────────────────────────
 MIN_CONFIDENCE   = float(os.getenv("MIN_CONFIDENCE",    "0.70"))
@@ -135,7 +159,7 @@ def _signed_headers(method: str, path: str) -> dict:
 def place_order(ticker: str, side: str, size_usd: float, price: float) -> bool:
     if PAPER_MODE:
         ev = expected_value(price, price)   # illustrative — use actual model_prob in caller
-        print(f"  [PAPER] {side.upper()} {ticker}  @ {price:.3f}  size=${size_usd:.2f}")
+        _print(f"  [PAPER] {side.upper()} {ticker}  @ {price:.3f}  size=${size_usd:.2f}")
         return True
     try:
         price_cents = max(1, min(99, round(price * 100)))
@@ -158,10 +182,10 @@ def place_order(ticker: str, side: str, size_usd: float, price: float) -> bool:
         )
         resp.raise_for_status()
         order_id = resp.json().get("order", {}).get("id", "?")
-        print(f"  [ORDER] {side.upper()} {ticker} @ {price:.3f} × {count}  id={order_id}")
+        _print(f"  [ORDER] {side.upper()} {ticker} @ {price:.3f} × {count}  id={order_id}")
         return True
     except Exception as e:
-        print(f"  [ERROR] Order failed for {ticker}: {e}")
+        _print(f"  [ERROR] Order failed for {ticker}: {e}")
         return False
 
 
@@ -176,7 +200,7 @@ def close_position(ticker: str, price: float, size_usd: float) -> bool:
 def run():
     rf_model = m.load()
     if rf_model is None:
-        print("[bot] No trained model found. Run  python train.py  first.")
+        _print("[bot] No trained model found. Run  python train.py  first.")
         return
 
     perf_log  = PerformanceLog(risk_free_rate=RISK_FREE_RATE)
@@ -184,33 +208,33 @@ def run():
     guard     = RiskGuard()
 
     mode  = "PAPER" if PAPER_MODE else "LIVE"
-    print(f"\n{'='*60}")
-    print(f"  Kalshi RF Bot  |  {mode}  |  poll {POLL_INTERVAL}s")
-    print(f"  MIN_CONFIDENCE={MIN_CONFIDENCE}  MIN_EDGE={MIN_EDGE}  FEE={FEE_RATE:.0%}")
-    print(f"  Kelly fraction={KELLY_FRACTION}  Max bankroll=${MAX_BANKROLL:.0f}  Cap=${MAX_POSITION_USD:.0f}")
-    print(f"{'='*60}\n")
+    _print(f"\n{'='*60}")
+    _print(f"  Kalshi RF Bot  |  {mode}  |  poll {POLL_INTERVAL}s")
+    _print(f"  MIN_CONFIDENCE={MIN_CONFIDENCE}  MIN_EDGE={MIN_EDGE}  FEE={FEE_RATE:.0%}")
+    _print(f"  Kelly fraction={KELLY_FRACTION}  Max bankroll=${MAX_BANKROLL:.0f}  Cap=${MAX_POSITION_USD:.0f}")
+    _print(f"{'='*60}\n")
 
     # Print feature importances so we can see what the model is actually using
     importance = m.feature_importance(rf_model)
     if importance:
         top = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:5]
-        print("  Top-5 features by importance:")
+        _print("  Top-5 features by importance:")
         for feat, imp in top:
-            print(f"    {feat:<20} {imp:.3f}")
-        print()
+            _print(f"    {feat:<20} {imp:.3f}")
+        _print()
 
     last_cleanup = time.time()
 
     while True:
         try:
             now = datetime.datetime.now().strftime("%H:%M:%S")
-            print(f"[{now}] Scanning markets …")
+            _print(f"[{now}] Scanning markets …")
 
             raw_df  = d.fetch_markets(limit=150)
             feat_df = d.build_features(raw_df)
 
             if feat_df.empty:
-                print("  No feature data — sleeping.")
+                _print("  No feature data — sleeping.")
                 time.sleep(POLL_INTERVAL)
                 continue
 
@@ -228,17 +252,16 @@ def run():
                 # ── EXIT (always allowed — circuit breaker never blocks exits) ──
                 sell, reason = should_sell(market_price, model_prob, days_left)
                 if tracker and sell:
-                    print(f"  SELL [{reason}]  {row['title'][:60]}")
-                    print(f"    exit={market_price:.3f}  model={model_prob:.3f}")
+                    _print(f"  SELL [{reason}]  {row['title'][:60]}")
+                    _print(f"    exit={market_price:.3f}  model={model_prob:.3f}")
                     close_position(ticker, market_price, pos_size)
                     trade = tracker.close(market_price)
                     # Convert log return → dollar P&L so the risk guard tracks real $
-                    import math
                     pnl_usd = pos_size * (math.exp(trade["log_return"]) - 1.0)
                     guard.record_trade(pnl_usd)
                     perf_log.record(trade)
                     sign = "+" if trade["log_return"] > 0 else ""
-                    print(f"    return={sign}{trade['log_return']:.4f}  "
+                    _print(f"    return={sign}{trade['log_return']:.4f}  "
                           f"P&L=${pnl_usd:+.2f}  "
                           f"MAE={trade['mae']:.4f}  MFE={trade['mfe']:.4f}\n")
                     del positions[ticker]
@@ -252,15 +275,15 @@ def run():
                     enter, size = should_buy(market_price, model_prob)
                     if enter:
                         ev = expected_value(market_price, model_prob)
-                        print(f"  BUY  {row['title'][:60]}")
-                        print(f"    market={market_price:.3f}  model={model_prob:.3f}  "
+                        _print(f"  BUY  {row['title'][:60]}")
+                        _print(f"    market={market_price:.3f}  model={model_prob:.3f}  "
                               f"EV={ev:+.3f}  size=${size:.2f}")
                         if place_order(ticker, "yes", size, market_price):
                             positions[ticker] = (
                                 PositionTracker(ticker, market_price, model_prob),
                                 size,
                             )
-                        print()
+                        _print()
 
             # ── Periodic summary ──────────────────────────────────────────────
             if perf_log.trades:
@@ -270,8 +293,8 @@ def run():
             risk_line = f"  Risk: {guard.status()}"
             if not allowed:
                 risk_line += f"\n  *** ENTRIES HALTED — {block_reason} ***"
-            print(risk_line)
-            print(f"  Open positions: {len(positions)}  |  sleeping {POLL_INTERVAL}s …\n")
+            _print(risk_line)
+            _print(f"  Open positions: {len(positions)}  |  sleeping {POLL_INTERVAL}s …\n")
 
             # DB cleanup once per day
             if time.time() - last_cleanup > 86400:
@@ -281,11 +304,11 @@ def run():
             time.sleep(POLL_INTERVAL)
 
         except KeyboardInterrupt:
-            print("\n[bot] Stopped.")
+            _print("\n[bot] Stopped.")
             perf_log.print_summary()
             break
         except Exception as e:
-            print(f"[bot] Error: {e} — retrying in 60s")
+            _print(f"[bot] Error: {e} — retrying in 60s")
             time.sleep(60)
 
 
