@@ -22,6 +22,7 @@ import db
 import model as m
 from features import FEATURE_COLS, as_array
 from metrics import PerformanceLog, PositionTracker
+from risk import RiskGuard
 
 load_dotenv()
 
@@ -180,6 +181,7 @@ def run():
 
     perf_log  = PerformanceLog(risk_free_rate=RISK_FREE_RATE)
     positions: dict[str, tuple[PositionTracker, float]] = {}  # ticker → (tracker, size_usd)
+    guard     = RiskGuard()
 
     mode  = "PAPER" if PAPER_MODE else "LIVE"
     print(f"\n{'='*60}")
@@ -223,21 +225,30 @@ def run():
                 if tracker:
                     tracker.update(market_price)
 
-                # ── EXIT ─────────────────────────────────────────────────────
+                # ── EXIT (always allowed — circuit breaker never blocks exits) ──
                 sell, reason = should_sell(market_price, model_prob, days_left)
                 if tracker and sell:
                     print(f"  SELL [{reason}]  {row['title'][:60]}")
                     print(f"    exit={market_price:.3f}  model={model_prob:.3f}")
                     close_position(ticker, market_price, pos_size)
                     trade = tracker.close(market_price)
+                    # Convert log return → dollar P&L so the risk guard tracks real $
+                    import math
+                    pnl_usd = pos_size * (math.exp(trade["log_return"]) - 1.0)
+                    guard.record_trade(pnl_usd)
                     perf_log.record(trade)
                     sign = "+" if trade["log_return"] > 0 else ""
                     print(f"    return={sign}{trade['log_return']:.4f}  "
+                          f"P&L=${pnl_usd:+.2f}  "
                           f"MAE={trade['mae']:.4f}  MFE={trade['mfe']:.4f}\n")
                     del positions[ticker]
 
-                # ── ENTRY ─────────────────────────────────────────────────────
+                # ── ENTRY (blocked if any circuit breaker is tripped) ─────────
                 elif not tracker:
+                    allowed, block_reason = guard.can_open(len(positions))
+                    if not allowed:
+                        # Print once per scan cycle, not once per market
+                        continue
                     enter, size = should_buy(market_price, model_prob)
                     if enter:
                         ev = expected_value(market_price, model_prob)
@@ -255,6 +266,11 @@ def run():
             if perf_log.trades:
                 perf_log.print_summary()
 
+            allowed, block_reason = guard.can_open(len(positions))
+            risk_line = f"  Risk: {guard.status()}"
+            if not allowed:
+                risk_line += f"\n  *** ENTRIES HALTED — {block_reason} ***"
+            print(risk_line)
             print(f"  Open positions: {len(positions)}  |  sleeping {POLL_INTERVAL}s …\n")
 
             # DB cleanup once per day
