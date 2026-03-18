@@ -1,0 +1,40 @@
+# Environment / secrets — never commit these
+.env
+*.pem
+*.key
+
+# Trained model (large binary, regenerate with train.py)
+rf_model.joblib
+
+# Price history database (local runtime data)
+price_history.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / output
+*.log
