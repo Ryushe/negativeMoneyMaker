@@ -16,13 +16,13 @@ import model as m
 from data import _days_to_expiry
 from features import FEATURE_COLS, classify
 
-KALSHI_API = "https://trading.kalshi.com/trade-api/v2"
+KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
 
 def fetch_resolved(limit: int) -> pd.DataFrame:
     markets, cursor = [], ""
     while len(markets) < limit:
-        params: dict = {"limit": min(200, limit - len(markets)), "status": "finalized"}
+        params: dict = {"limit": min(200, limit - len(markets)), "status": "settled"}
         if cursor:
             params["cursor"] = cursor
         resp = requests.get(f"{KALSHI_API}/markets", params=params, timeout=20)

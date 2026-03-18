@@ -2,7 +2,7 @@
 Kalshi API layer — fetch markets and build feature DataFrames.
 
 Responsibilities:
-  - HTTP calls to trading.kalshi.com
+  - HTTP calls to api.elections.kalshi.com
   - Orderbook midpoint + spread calculation
   - Orchestrating features.py for each market row
 """
@@ -16,7 +16,7 @@ import requests
 
 import features as f
 
-KALSHI_API = "https://trading.kalshi.com/trade-api/v2"
+KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
 _session = requests.Session()
 _session.headers.update({"Content-Type": "application/json"})

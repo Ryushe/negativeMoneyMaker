@@ -67,7 +67,7 @@ KALSHI_KEY_ID     = os.getenv("KALSHI_API_KEY_ID",     "")
 KALSHI_KEY_SECRET = os.getenv("KALSHI_API_KEY_SECRET", "")
 PAPER_MODE        = not (KALSHI_KEY_ID and KALSHI_KEY_SECRET)
 
-KALSHI_API = "https://trading.kalshi.com/trade-api/v2"
+KALSHI_API = "https://api.elections.kalshi.com/trade-api/v2"
 
 
 # ── Edge calculations ─────────────────────────────────────────────────────────
